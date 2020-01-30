@@ -475,7 +475,7 @@ def rmiesc(wn, app, ref, n_components=7, iterations=10, clusters=None,
            verbose=False, a=np.linspace(1.1, 1.5, 10), d=np.linspace(2.0, 8.0, 10),
            bvals=10, plot=False, progressCallback = None, progressPlotCallback=None,
            konevskikh=False, linearcomponent=True, weighted=False, renormalize=False,
-           autoiterations=False, targetrelresiduals=0.95):
+           autoiterations=False, targetrelresiduals=0.95, cluster_mixing=False):
     """
     Correct scattered spectra using Bassan's algorithm. This implementation does no orthogonalization
     of the extinction matrix or PCA components relative to the reference, nor is the reference smoothed
@@ -504,6 +504,8 @@ def rmiesc(wn, app, ref, n_components=7, iterations=10, clusters=None,
     renormalize: if True, renormalize spectra against reference in each generation.
     autoiterations; if True, iterate until residuals stop improving
     targetrelresiduals: if autoiterations, stop when this relative change in residuals is seen
+    cluster_mixing: if True, applies to each pixel the (weighted) corrections from several clusters, 
+        instead of only the one cluster it was affected to.
     Return: corrected apparent spectra (the best encountered if autoiterations, else the final ones)
     """
 
@@ -572,7 +574,7 @@ def rmiesc(wn, app, ref, n_components=7, iterations=10, clusters=None,
         ref = ref.copy()[None, :]    # One reference per cluster
         ref = ref / (np.abs(ref).mean() / np.abs(app).mean())
         labels = np.zeros(len(app))  # Cluster labels; initially all in cluster 0
-        cls_weights = np.ones((len(app),1))  # Weights of each cluster in each spectrum 
+        cls_distances = np.ones((len(app),1))  # Weights of each cluster in each spectrum 
 #        clusters[-1] = 0
         progressA = 0
         progstep = 1 # Current progress bar step size
@@ -605,25 +607,25 @@ def rmiesc(wn, app, ref, n_components=7, iterations=10, clusters=None,
                     nds = notdone.sum()
                     curc = min(curc, int(nds))
                     labels = np.zeros(len(app)) - 1
-                    cls_weights = np.zeros((len(app), clusters))  
+                    cls_distances = np.zeros((len(app), clusters))  
                     if curc == nds:
                         labels[notdone] = range(0, nds)
-                        cls_weights[notdone] = [[1.]]*nds
+                        cls_distances[notdone] = [[1.]]*nds
                     elif curc > 1:
                         kmeans = sklearn.cluster.MiniBatchKMeans(curc)
                         labels[notdone] = kmeans.fit_predict(corrected[notdone,:])
-                        cls_weights[notdone] = kmeans.transform(corrected[notdone,:])
+                        cls_distances[notdone] = kmeans.transform(corrected[notdone,:])
                     else:
                         labels[notdone] = 0
-                        cls_weights[notdone] = [[1.]]*nds
+                        cls_distances[notdone] = [[1.]]*nds
                 else:
                     if curc > 1:
                         kmeans = sklearn.cluster.MiniBatchKMeans(curc)
                         labels = kmeans.fit_predict(corrected)
-                        cls_weights = kmeans.transform(corrected)
+                        cls_distances = kmeans.transform(corrected)
                     else:
                         labels = np.zeros(len(app), dtype=int)
-                        cls_weights = np.zeros((len(app), curc), dtype=int)
+                        cls_distances = np.zeros((len(app), curc), dtype=int)
 
                 if(len(ref) != curc):
                     ref = np.zeros((curc, len(wn)))
@@ -648,11 +650,19 @@ def rmiesc(wn, app, ref, n_components=7, iterations=10, clusters=None,
                 progressPlotCallback(ref, (iteration, iterations))
             ref[ref < 0] = 0
 
-            print(np.shape(cls_weights))
+            cls_weights = 1./cls_distances  
+            cls_weights = (1./cls_weights.sum(1)*cls_weights.T).T #normalizing weights (sum of weights for a given pix = 1)
+            if plot:
+                plt.figure()
+                plt.plot(np.sort(cls_weights.mean(0))[::-1], label='Iteration '+str(iteration))
+                plt.title('Distribution of weights')
+                plt.xlabel('Closest to furthest clusters')
+                plt.legend()
+                plt.show()
             corrs_array, model_array, ix_array = [], [], []
             for cl in range(len(ref)):
                 ix = np.where(labels == cl)[0] # Indexes of spectra in this cluster
-                cl_weights = cls_weights[ix, cl] #weights of this cluster's contribution
+                cl_weights = cls_weights[ix, cl] #weight of this cluster's contribution for each of the pixels it contains
                 if autoiterations:
                     ix = ix[unimproved[ix] <= automax]
                 if ix.size:
@@ -663,9 +673,11 @@ def rmiesc(wn, app, ref, n_components=7, iterations=10, clusters=None,
                         cons = np.linalg.lstsq(model.T, app[ix, :].T, rcond=None)[0]
                     else:
                         cons = np.linalg.lstsq(model.T * weights, app[ix, :].T * weights, rcond=None)[0]
-                    corrs_array.append(app[ix] - cons[1:, :].T @ model[1:, :])
-                    print(np.shape(corrs_array[-1]))
-                    print(np.shape(cl_weights @ corrs_array[-1]))
+                    corrs = app[ix] - cons[1:, :].T @ model[1:, :]
+                    if cluster_mixing :
+                        corrs_array.append((cl_weights*corrs.T).T) #store corrections (weighted)
+                    else :
+                        corrs_array.append(corrs) #store corrections (not weighted)
                     model_array.append(model)
                     ix_array.append(ix)
                     if verbose:
