@@ -572,7 +572,9 @@ def rmiesc(wn, app, ref, n_components=7, iterations=10, clusters=None,
         ref = ref.copy()[None, :]    # One reference per cluster
         ref = ref / (np.abs(ref).mean() / np.abs(app).mean())
         labels = np.zeros(len(app))  # Cluster labels; initially all in cluster 0
+        cls_weights = np.ones((len(app),1))  # Weights of each cluster in each spectrum 
 #        clusters[-1] = 0
+        progressA = 0
         progstep = 1 # Current progress bar step size
 
         for iteration in range(iterations):
@@ -603,19 +605,25 @@ def rmiesc(wn, app, ref, n_components=7, iterations=10, clusters=None,
                     nds = notdone.sum()
                     curc = min(curc, int(nds))
                     labels = np.zeros(len(app)) - 1
+                    cls_weights = np.zeros((len(app), clusters))  
                     if curc == nds:
                         labels[notdone] = range(0, nds)
+                        cls_weights[notdone] = [[1.]]*nds
                     elif curc > 1:
                         kmeans = sklearn.cluster.MiniBatchKMeans(curc)
                         labels[notdone] = kmeans.fit_predict(corrected[notdone,:])
+                        cls_weights[notdone] = kmeans.transform(corrected[notdone,:])
                     else:
                         labels[notdone] = 0
+                        cls_weights[notdone] = [[1.]]*nds
                 else:
                     if curc > 1:
                         kmeans = sklearn.cluster.MiniBatchKMeans(curc)
                         labels = kmeans.fit_predict(corrected)
+                        cls_weights = kmeans.transform(corrected)
                     else:
                         labels = np.zeros(len(app), dtype=int)
+                        cls_weights = np.zeros((len(app), curc), dtype=int)
 
                 if(len(ref) != curc):
                     ref = np.zeros((curc, len(wn)))
@@ -640,8 +648,11 @@ def rmiesc(wn, app, ref, n_components=7, iterations=10, clusters=None,
                 progressPlotCallback(ref, (iteration, iterations))
             ref[ref < 0] = 0
 
+            print(np.shape(cls_weights))
+            corrs_array, model_array, ix_array = [], [], []
             for cl in range(len(ref)):
                 ix = np.where(labels == cl)[0] # Indexes of spectra in this cluster
+                cl_weights = cls_weights[ix, cl] #weights of this cluster's contribution
                 if autoiterations:
                     ix = ix[unimproved[ix] <= automax]
                 if ix.size:
@@ -652,30 +663,40 @@ def rmiesc(wn, app, ref, n_components=7, iterations=10, clusters=None,
                         cons = np.linalg.lstsq(model.T, app[ix, :].T, rcond=None)[0]
                     else:
                         cons = np.linalg.lstsq(model.T * weights, app[ix, :].T * weights, rcond=None)[0]
-                    corrs = app[ix] - cons[1:, :].T @ model[1:, :]
-                    if renormalize:
-                        corrs = corrs / cons[0, :, None]
-                    resids = ((corrs - model[0, :])**2).sum(1)
-
-                    if iteration == 0:
-                        corrected = corrs
-                        residuals = resids
-                        nimprov = len(resids)
-                    else:
-                        improved = resids < residuals[ix]
-                        iximp = ix[improved]  # Indexes of improved spectra
-                        if autoiterations:
-                            impmore = resids[improved] < residuals[iximp] * targetrelresiduals
-                            unimproved[iximp[impmore]] = 0
-                            unimproved[iximp[np.logical_not(impmore)]] += 1
-                            unimproved[ix[np.logical_not(improved)]] += autoupadd
-                        corrected[iximp, :] = corrs[improved, :]
-                        residuals[iximp] = resids[improved]
-                        nimprov = improved.sum()
-
+                    corrs_array.append(app[ix] - cons[1:, :].T @ model[1:, :])
+                    print(np.shape(corrs_array[-1]))
+                    print(np.shape(cl_weights @ corrs_array[-1]))
+                    model_array.append(model)
+                    ix_array.append(ix)
                     if verbose:
-                        print("iter %3d, cluster %3d (%5d px): avgres %7.3g  imprvd %4d  time %f" %
-                              (iteration, cl, len(ix), resids.mean(), nimprov, monotonic()-startt))
+                        print("model fitting : iter %3d, cluster %3d (%5d px): time %f" %
+                              (iteration, cl, len(ix), monotonic()-startt))
+
+            
+            for cl, corrs, model, ix in zip(range(len(corrs_array)), corrs_array, model_array, ix_array): 
+                if renormalize:
+                    corrs = corrs / cons[0, :, None]
+                resids = ((corrs - model[0, :])**2).sum(1)
+
+                if iteration == 0:
+                    corrected = corrs
+                    residuals = resids
+                    nimprov = len(resids)
+                else:
+                    improved = resids < residuals[ix]
+                    iximp = ix[improved]  # Indexes of improved spectra
+                    if autoiterations:
+                        impmore = resids[improved] < residuals[iximp] * targetrelresiduals
+                        unimproved[iximp[impmore]] = 0
+                        unimproved[iximp[np.logical_not(impmore)]] += 1
+                        unimproved[ix[np.logical_not(improved)]] += autoupadd
+                    corrected[iximp, :] = corrs[improved, :]
+                    residuals[iximp] = resids[improved]
+                    nimprov = improved.sum()
+
+                if verbose:
+                    print("correction : iter %3d, cluster %3d (%5d px): avgres %7.3g  imprvd %4d  time %f" %
+                          (iteration, cl, len(ix), resids.mean(), nimprov, monotonic()-startt))
                 if progressCallback:
                     progressCallback(progressA + cl + 1, progressB)
             progressA += progstep
