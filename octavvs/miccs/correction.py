@@ -652,16 +652,21 @@ def rmiesc(wn, app, ref, n_components=7, iterations=10, clusters=None,
 
             cls_weights = 1./cls_distances  
             cls_weights = (1./cls_weights.sum(1)*cls_weights.T).T #normalizing weights (sum of weights for a given pix = 1)
-            if plot:
-                plt.figure()
-                plt.plot(np.sort(cls_weights.mean(0))[::-1], label='Iteration '+str(iteration))
-                plt.title('Distribution of weights')
-                plt.xlabel('Closest to furthest clusters')
-                plt.legend()
-                plt.show()
+            #print(np.shape(cls_weights))
+            labels = np.argsort(cls_weights, axis=1)[:,-1] #label as the highest weighted cluster
+            if len(ref)>1 :
+                labels2 = np.argsort(cls_weights, axis=1)[:,-2] #label2 as the second highest weighted cluster
+            #TODO : change the previous definition of labels
+            #if plot:
+            #    plt.figure()
+            #    plt.plot(np.sort(cls_weights.mean(0))[::-1], label='Iteration '+str(iteration))
+            #    plt.title('Distribution of weights')
+            #    plt.xlabel('Closest to furthest clusters')
             corrs_array, model_array, ix_array = [], [], []
             for cl in range(len(ref)):
                 ix = np.where(labels == cl)[0] # Indexes of spectra in this cluster
+                if len(ref)>1 : #only if there are several clusters
+                    ix = np.concatenate((ix, np.where(labels2 == cl)[0])) #cluster mixing : we also take the pixels for which the second most weighted cluster was cl
                 cl_weights = cls_weights[ix, cl] #weight of this cluster's contribution for each of the pixels it contains
                 if autoiterations:
                     ix = ix[unimproved[ix] <= automax]
@@ -685,6 +690,8 @@ def rmiesc(wn, app, ref, n_components=7, iterations=10, clusters=None,
                               (iteration, cl, len(ix), monotonic()-startt))
 
             
+            to_correct = np.zeros(np.shape(corrected))
+            ix_imp_array = []
             for cl, corrs, model, ix in zip(range(len(corrs_array)), corrs_array, model_array, ix_array): 
                 if renormalize:
                     corrs = corrs / cons[0, :, None]
@@ -695,22 +702,28 @@ def rmiesc(wn, app, ref, n_components=7, iterations=10, clusters=None,
                     residuals = resids
                     nimprov = len(resids)
                 else:
+                    #Note : each pixel can be in several ix because of cluster_mixing
                     improved = resids < residuals[ix]
                     iximp = ix[improved]  # Indexes of improved spectra
+                    ix_imp_array.append(iximp) #we keep track of those, since we only want to replace those
                     if autoiterations:
                         impmore = resids[improved] < residuals[iximp] * targetrelresiduals
                         unimproved[iximp[impmore]] = 0
-                        unimproved[iximp[np.logical_not(impmore)]] += 1
+                        unimproved[iximp[np.logical_not(impmore)]] += 1 #TODO
                         unimproved[ix[np.logical_not(improved)]] += autoupadd
-                    corrected[iximp, :] = corrs[improved, :]
-                    residuals[iximp] = resids[improved]
+                    to_correct[iximp, :] += corrs[improved, :] #since corrs is weighted, this works
+                    residuals[iximp] = resids[improved] #TODO
                     nimprov = improved.sum()
-
                 if verbose:
                     print("correction : iter %3d, cluster %3d (%5d px): avgres %7.3g  imprvd %4d  time %f" %
                           (iteration, cl, len(ix), resids.mean(), nimprov, monotonic()-startt))
                 if progressCallback:
                     progressCallback(progressA + cl + 1, progressB)
+
+            if iteration != 0:
+                ix_treated = np.unique(np.concatenate(ix_imp_array))
+                corrected[ix_treated] = to_correct[ix_treated]
+
             progressA += progstep
             if progressCallback and len(ref) < progstep:
                 progressCallback(progressA, progressB)
