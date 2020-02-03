@@ -652,21 +652,33 @@ def rmiesc(wn, app, ref, n_components=7, iterations=10, clusters=None,
 
             cls_weights = 1./cls_distances  
             cls_weights = (1./cls_weights.sum(1)*cls_weights.T).T #normalizing weights (sum of weights for a given pix = 1)
+            weight_cutoff = .8
+            new_weights = np.zeros(np.shape(cls_weights))
+            for i, pix_cl_weights in zip(range(len(cls_weights)),cls_weights):
+                sum_weights = 0
+                for j, pix_cl_w in zip(np.argsort(pix_cl_weights)[::-1], np.sort(pix_cl_weights)[::-1]):
+                    if sum_weights <= weight_cutoff: 
+                        new_weights[i, j] = pix_cl_w
+                    sum_weights += pix_cl_w
+            new_weights = (1./new_weights.sum(1)*new_weights.T).T #normalizing weights (sum of weights for a given pix = 1)
+            if plot:
+                plt.figure()
+                plt.plot(np.sort(cls_weights.mean(0))[::-1], label='Before cutoff')
+                plt.plot(np.sort(new_weights.mean(0))[::-1], label='After cutoff')
+                plt.title('Distribution of weights')
+                plt.xlabel('Closest to furthest clusters')
+                plt.legend()
+                plt.show()
+            cls_weights = new_weights
             #print(np.shape(cls_weights))
-            labels = np.argsort(cls_weights, axis=1)[:,-1] #label as the highest weighted cluster
-            if len(ref)>1 :
-                labels2 = np.argsort(cls_weights, axis=1)[:,-2] #label2 as the second highest weighted cluster
+            labels_array = np.argsort(cls_weights, axis=1)[:,::-1].T
             #TODO : change the previous definition of labels
-            #if plot:
-            #    plt.figure()
-            #    plt.plot(np.sort(cls_weights.mean(0))[::-1], label='Iteration '+str(iteration))
-            #    plt.title('Distribution of weights')
-            #    plt.xlabel('Closest to furthest clusters')
             corrs_array, model_array, ix_array = [], [], []
             for cl in range(len(ref)):
-                ix = np.where(labels == cl)[0] # Indexes of spectra in this cluster
-                if len(ref)>1 : #only if there are several clusters
-                    ix = np.concatenate((ix, np.where(labels2 == cl)[0])) #cluster mixing : we also take the pixels for which the second most weighted cluster was cl
+                #ix = np.where(labels_array[0] == cl)[0] # Indexes of spectra in this cluster
+                #if len(ref)>1 : #only if there are several clusters
+                #    ix = np.concatenate((ix, np.where(labels_array[1] == cl)[0])) #cluster mixing : we also take the pixels for which the second most weighted cluster was cl
+                ix = np.arange(labels_array.shape[1])
                 cl_weights = cls_weights[ix, cl] #weight of this cluster's contribution for each of the pixels it contains
                 if autoiterations:
                     ix = ix[unimproved[ix] <= automax]
