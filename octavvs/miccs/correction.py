@@ -663,8 +663,8 @@ def rmiesc(wn, app, ref, n_components=7, iterations=10, clusters=None,
             new_weights = (1./new_weights.sum(1)*new_weights.T).T #normalizing weights (sum of weights for a given pix = 1)
             if plot:
                 plt.figure()
-                plt.plot(np.sort(cls_weights.mean(0))[::-1], label='Before cutoff')
-                plt.plot(np.sort(new_weights.mean(0))[::-1], label='After cutoff')
+                plt.plot(np.sort(cls_weights, axis=1).mean(0)[::-1], label='Before cutoff')
+                plt.plot(np.sort(new_weights, axis=1).mean(0)[::-1], label='After cutoff')
                 plt.title('Distribution of weights')
                 plt.xlabel('Closest to furthest clusters')
                 plt.legend()
