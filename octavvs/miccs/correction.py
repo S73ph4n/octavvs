@@ -480,7 +480,6 @@ def weights_from_distances(cls_distances, order=1, cutoff=1.):
     array of same shape as cls_distances, but with normalized weights instead of distances
     '''
     cls_weights = np.nan_to_num(1./(cls_distances**order))
-    print(np.isinf(cls_weights).any())
     cls_weights = (1./cls_weights.sum(1)*cls_weights.T).T #normalizing weights (sum of weights for a given pix = 1)
     new_weights = np.zeros(np.shape(cls_weights))
     for i, pix_cl_weights in zip(range(len(cls_weights)),cls_weights):
@@ -597,7 +596,6 @@ def rmiesc(wn, app, ref, n_components=7, iterations=10, clusters=None,
         labels = np.zeros(len(app))  # Cluster labels; initially all in cluster 0
         cls_distances = np.ones((len(app),1))  # Weights of each cluster in each spectrum 
 #        clusters[-1] = 0
-        progressA = 0
         progstep = 1 # Current progress bar step size
 
         for iteration in range(iterations):
@@ -695,22 +693,39 @@ def rmiesc(wn, app, ref, n_components=7, iterations=10, clusters=None,
                 if autoiterations:
                     ix = ix[unimproved[ix] <= automax]
                 if ix.size:
-                    model = compute_model(wn, ref[cl], n_components, a, d, bvals,
+                    model0 = compute_model(wn, ref[cl], n_components, a, d, bvals,
                                           konevskikh=konevskikh, linearcomponent=linearcomponent,
                                           variancelimit=pcavariancelimit)
+                    if iteration == 0 :
+                        specs = app[ix, :] - model0[0, :]
+                    else :
+                        specs = app[ix, :] - corrected[ix, :] #We use the previous corrected spectra as references for the least-squares
+                        #TODO : project it, maybe
+
+                    model = model0[1:, :] #Then we don't need the reference part of the model
+
                     if weights is None:
-                        cons = np.linalg.lstsq(model.T, app[ix, :].T, rcond=None)[0]
+                        cons = np.linalg.lstsq(model.T, specs.T, rcond=None)[0]
                     else:
-                        cons = np.linalg.lstsq(model.T * weights, app[ix, :].T * weights, rcond=None)[0]
-                    corrs = app[ix] - cons[1:, :].T @ model[1:, :]
+                        cons = np.linalg.lstsq(model.T * weights, specs.T * weights, rcond=None)[0]
+                    corrs = app[ix] - cons.T @ model
                     if renormalize:
                         corrs = corrs / cons[0, :, None]
-                    if cluster_mixing :
+
+                    if cluster_mixing : #TODO : remove that 'if' by defining cl_weights even without cluster mixing
                         corrs0[ix] += (cl_weights*corrs.T).T
-                        resids0[ix] += (cl_weights*(corrs - model[0, :]).T).T
+                        if iteration == 0 :
+                            resids0[ix] += (cl_weights*(corrs - model[0, :]).T).T
+                        else :
+                            resids0[ix] += (cl_weights*(corrs - corrected[ix, :]).T).T#We compare to the previous correction, not the reference
                     else :
                         corrs0[ix] += corrs
                         resids0[ix] += ((corrs - model[0, :]).T).T
+                        if iteration == 0 :
+                            resids0[ix] += ((corrs - model[0, :]).T).T
+                        else :
+                            resids0[ix] += ((corrs - corrected[ix, :]).T).T#We compare to the previous correction, not the reference
+
                     if len(labels_array)>1 :
                         cl_size = len(np.where(labels_array[0]==cl)[0])
                     else :
@@ -749,9 +764,10 @@ def rmiesc(wn, app, ref, n_components=7, iterations=10, clusters=None,
                 if renormalize:
                     corrs = corrs / cons[0, :, None]
 
-            progressA += progstep
-            if progressCallback and len(ref) < progstep:
-                progressCallback(progressA, progressB)
+            if progressCallback:
+                progressA += progstep
+                if len(ref) < progstep:
+                    progressCallback(progressA, progressB)
 #            print('progY',progressA,progressB)
 
     else:
