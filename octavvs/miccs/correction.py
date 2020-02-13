@@ -470,6 +470,27 @@ def stable_rmiesc_clusters(iters, clusters):
     cc[iters//2:iters*3//4] = clusters
     return cc
 
+def weights_from_distances(cls_distances, order=1, cutoff=1.):
+    ''' Used in the cluster mixing. 
+    Parameters :
+    cls_distances : (n_clusters x n_pix) array of the distances of the j pixel to the i cluster
+    order : power to which we set the distance, so closest clusters are even more favored
+    cutoff : fraction of the weight we try to explain, and set the rest to 0
+    Returns :
+    array of same shape as cls_distances, but with normalized weights instead of distances
+    '''
+    cls_weights = np.nan_to_num(1./(cls_distances**order))
+    print(np.isinf(cls_weights).any())
+    cls_weights = (1./cls_weights.sum(1)*cls_weights.T).T #normalizing weights (sum of weights for a given pix = 1)
+    new_weights = np.zeros(np.shape(cls_weights))
+    for i, pix_cl_weights in zip(range(len(cls_weights)),cls_weights):
+        sum_weights = 0
+        for j, pix_cl_w in zip(np.argsort(pix_cl_weights)[::-1], np.sort(pix_cl_weights)[::-1]):
+            if sum_weights <= cutoff: 
+                new_weights[i, j] = pix_cl_w
+            sum_weights += pix_cl_w
+    return (1./new_weights.sum(1)*new_weights.T).T #normalizing weights (sum of weights for a given pix = 1)
+
 def rmiesc(wn, app, ref, n_components=7, iterations=10, clusters=None,
            pcavariancelimit=None,
            verbose=False, a=np.linspace(1.1, 1.5, 10), d=np.linspace(2.0, 8.0, 10),
@@ -606,8 +627,8 @@ def rmiesc(wn, app, ref, n_components=7, iterations=10, clusters=None,
                     notdone = unimproved <= automax
                     nds = notdone.sum()
                     curc = min(curc, int(nds))
-                    labels = np.zeros(len(app)) - 1
-                    cls_distances = np.zeros((len(app), clusters))  
+                    labels = np.zeros(len(app), dtype=int) - 1
+                    cls_distances = np.zeros((len(app), curc))  
                     if curc == nds:
                         labels[notdone] = range(0, nds)
                         cls_distances[notdone] = [[1.]]*nds
@@ -650,35 +671,26 @@ def rmiesc(wn, app, ref, n_components=7, iterations=10, clusters=None,
                 progressPlotCallback(ref, (iteration, iterations))
             ref[ref < 0] = 0
 
-            cls_weights = 1./cls_distances  
-            cls_weights = (1./cls_weights.sum(1)*cls_weights.T).T #normalizing weights (sum of weights for a given pix = 1)
-            weight_cutoff = .8
-            new_weights = np.zeros(np.shape(cls_weights))
-            for i, pix_cl_weights in zip(range(len(cls_weights)),cls_weights):
-                sum_weights = 0
-                for j, pix_cl_w in zip(np.argsort(pix_cl_weights)[::-1], np.sort(pix_cl_weights)[::-1]):
-                    if sum_weights <= weight_cutoff: 
-                        new_weights[i, j] = pix_cl_w
-                    sum_weights += pix_cl_w
-            new_weights = (1./new_weights.sum(1)*new_weights.T).T #normalizing weights (sum of weights for a given pix = 1)
-            if plot:
-                plt.figure()
-                plt.plot(np.sort(cls_weights, axis=1).mean(0)[::-1], label='Before cutoff')
-                plt.plot(np.sort(new_weights, axis=1).mean(0)[::-1], label='After cutoff')
-                plt.title('Distribution of weights')
-                plt.xlabel('Closest to furthest clusters')
-                plt.legend()
-                plt.show()
-            cls_weights = new_weights
-            #print(np.shape(cls_weights))
+
+            #if plot:
+            #    plt.figure()
+            #    plt.plot(np.sort(weights_from_distances(cls_distances, order=1, cutoff=1.), axis=1).mean(0)[::-1], label='Before cutoff')
+            #    plt.plot(np.sort(weights_from_distances(cls_distances, order=1, cutoff=.8), axis=1).mean(0)[::-1], label='After cutoff')
+            #    plt.plot(np.sort(weights_from_distances(cls_distances, order=2), axis=1).mean(0)[::-1], label='Second degree')
+            #    plt.title('Distribution of weights')
+            #    plt.xlabel('Closest to furthest clusters')
+            #    plt.legend()
+            #    plt.show()
+            #cls_weights = weights_from_distances(cls_distances, order=1, cutoff=.8)
+            cls_weights = weights_from_distances(cls_distances, order=1, cutoff=0.)
             labels_array = np.argsort(cls_weights, axis=1)[:,::-1].T
-            #TODO : change the previous definition of labels
-            corrs_array, model_array, ix_array = [], [], []
+
+            corrs0, resids0 = np.zeros((labels_array.shape[1], ref.shape[1])), np.zeros((labels_array.shape[1], ref.shape[1]))  
             for cl in range(len(ref)):
                 #ix = np.where(labels_array[0] == cl)[0] # Indexes of spectra in this cluster
                 #if len(ref)>1 : #only if there are several clusters
                 #    ix = np.concatenate((ix, np.where(labels_array[1] == cl)[0])) #cluster mixing : we also take the pixels for which the second most weighted cluster was cl
-                ix = np.arange(labels_array.shape[1])
+                ix = np.arange(labels_array.shape[1]) #take all the pixels
                 cl_weights = cls_weights[ix, cl] #weight of this cluster's contribution for each of the pixels it contains
                 if autoiterations:
                     ix = ix[unimproved[ix] <= automax]
@@ -691,50 +703,51 @@ def rmiesc(wn, app, ref, n_components=7, iterations=10, clusters=None,
                     else:
                         cons = np.linalg.lstsq(model.T * weights, app[ix, :].T * weights, rcond=None)[0]
                     corrs = app[ix] - cons[1:, :].T @ model[1:, :]
+                    if renormalize:
+                        corrs = corrs / cons[0, :, None]
                     if cluster_mixing :
-                        corrs_array.append((cl_weights*corrs.T).T) #store corrections (weighted)
+                        corrs0[ix] += (cl_weights*corrs.T).T
+                        resids0[ix] += (cl_weights*(corrs - model[0, :]).T).T
                     else :
-                        corrs_array.append(corrs) #store corrections (not weighted)
-                    model_array.append(model)
-                    ix_array.append(ix)
+                        corrs0[ix] += corrs
+                        resids0[ix] += ((corrs - model[0, :]).T).T
+                    if len(labels_array)>1 :
+                        cl_size = len(np.where(labels_array[0]==cl)[0])
+                    else :
+                        cl_size = len(labels_array[0])
                     if verbose:
                         print("model fitting : iter %3d, cluster %3d (%5d px): time %f" %
-                              (iteration, cl, len(ix), monotonic()-startt))
+                              (iteration, cl, cl_size , monotonic()-startt))
 
-            
-            to_correct = np.zeros(np.shape(corrected))
-            ix_imp_array = []
-            for cl, corrs, model, ix in zip(range(len(corrs_array)), corrs_array, model_array, ix_array): 
+            resids = (resids0**2).sum(1)
+            corrs = corrs0
+            if iteration == 0:
+                corrected = corrs
+                residuals = resids
+                nimprov = len(resids)
+            else:
+                ix = np.arange(len(resids))
+                improved = resids < residuals[ix]
+                iximp = ix[improved]  # Indexes of improved spectra
+                if autoiterations:
+                    impmore = resids[improved] < residuals[iximp] * targetrelresiduals
+                    unimproved[iximp[impmore]] = 0
+                    unimproved[iximp[np.logical_not(impmore)]] += 1 
+                    unimproved[ix[np.logical_not(improved)]] += autoupadd
+                corrected[iximp, :] = corrs[improved, :]
+                #corrected[iximp, :] = corrs[iximp, :]
+                residuals[iximp] = resids[improved] 
+                #residuals[iximp] = resids[iximp] 
+                nimprov = improved.sum()
+            if verbose:
+                print("correction : iter %3d, : avgres %7.3g  imprvd %4d  time %f" %
+                      (iteration, resids.mean(), nimprov, monotonic()-startt))
+            if progressCallback:
+                progressCallback(progressA + cl + 1, progressB)
+
+            if iteration != 0:                
                 if renormalize:
                     corrs = corrs / cons[0, :, None]
-                resids = ((corrs - model[0, :])**2).sum(1)
-
-                if iteration == 0:
-                    corrected = corrs
-                    residuals = resids
-                    nimprov = len(resids)
-                else:
-                    #Note : each pixel can be in several ix because of cluster_mixing
-                    improved = resids < residuals[ix]
-                    iximp = ix[improved]  # Indexes of improved spectra
-                    ix_imp_array.append(iximp) #we keep track of those, since we only want to replace those
-                    if autoiterations:
-                        impmore = resids[improved] < residuals[iximp] * targetrelresiduals
-                        unimproved[iximp[impmore]] = 0
-                        unimproved[iximp[np.logical_not(impmore)]] += 1 #TODO
-                        unimproved[ix[np.logical_not(improved)]] += autoupadd
-                    to_correct[iximp, :] += corrs[improved, :] #since corrs is weighted, this works
-                    residuals[iximp] = resids[improved] #TODO
-                    nimprov = improved.sum()
-                if verbose:
-                    print("correction : iter %3d, cluster %3d (%5d px): avgres %7.3g  imprvd %4d  time %f" %
-                          (iteration, cl, len(ix), resids.mean(), nimprov, monotonic()-startt))
-                if progressCallback:
-                    progressCallback(progressA + cl + 1, progressB)
-
-            if iteration != 0:
-                ix_treated = np.unique(np.concatenate(ix_imp_array))
-                corrected[ix_treated] = to_correct[ix_treated]
 
             progressA += progstep
             if progressCallback and len(ref) < progstep:
