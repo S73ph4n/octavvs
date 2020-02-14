@@ -669,21 +669,17 @@ def rmiesc(wn, app, ref, n_components=7, iterations=10, clusters=None,
                 progressPlotCallback(ref, (iteration, iterations))
             ref[ref < 0] = 0
 
-
-            #if plot:
-            #    plt.figure()
-            #    plt.plot(np.sort(weights_from_distances(cls_distances, order=1, cutoff=1.), axis=1).mean(0)[::-1], label='Before cutoff')
-            #    plt.plot(np.sort(weights_from_distances(cls_distances, order=1, cutoff=.8), axis=1).mean(0)[::-1], label='After cutoff')
-            #    plt.plot(np.sort(weights_from_distances(cls_distances, order=2), axis=1).mean(0)[::-1], label='Second degree')
-            #    plt.title('Distribution of weights')
-            #    plt.xlabel('Closest to furthest clusters')
-            #    plt.legend()
-            #    plt.show()
-            #cls_weights = weights_from_distances(cls_distances, order=1, cutoff=.8)
             cls_weights = weights_from_distances(cls_distances, order=1, cutoff=0.)
             labels_array = np.argsort(cls_weights, axis=1)[:,::-1].T
-
             corrs0, resids0 = np.zeros((labels_array.shape[1], ref.shape[1])), np.zeros((labels_array.shape[1], ref.shape[1]))  
+
+            if iteration == 0 :
+                projs = [np.dot(app[i], ref[0].T)*(ref[0]/(ref[0] @ ref[0])) for i in range(len(app))]
+            else :
+                projs = [np.dot(app[i], corrected[i].T)*(corrected[i]/(corrected[i] @ corrected[i])) for i in range(len(app))]
+            projs = np.array(projs)
+            app_deref = app - projs
+
             for cl in range(len(ref)):
                 #ix = np.where(labels_array[0] == cl)[0] # Indexes of spectra in this cluster
                 #if len(ref)>1 : #only if there are several clusters
@@ -696,43 +692,33 @@ def rmiesc(wn, app, ref, n_components=7, iterations=10, clusters=None,
                     model0 = compute_model(wn, ref[cl], n_components, a, d, bvals,
                                           konevskikh=konevskikh, linearcomponent=linearcomponent,
                                           variancelimit=pcavariancelimit)
-                    if iteration == 0 :
-                        specs = app[ix, :] - model0[0, :]
-                    else :
-                        specs = app[ix, :] - corrected[ix, :] #We use the previous corrected spectra as references for the least-squares
-                        #TODO : project it, maybe
+
+                    print(np.shape(corrected), np.shape(app))
+                    plt.figure()
+                    plt.plot(projs[0], label="Proj")
+                    plt.plot(app[0, :] - projs[0], label='Difference')
+                    plt.plot(app[0, :], label='App')
+                    if iteration :
+                        plt.plot(corrected[0, :], label='Prev')
+                    plt.legend()
+                    plt.show()
 
                     model = model0[1:, :] #Then we don't need the reference part of the model
 
                     if weights is None:
-                        cons = np.linalg.lstsq(model.T, specs.T, rcond=None)[0]
+                        cons = np.linalg.lstsq(model.T, app_deref[ix].T, rcond=None)[0]
                     else:
-                        cons = np.linalg.lstsq(model.T * weights, specs.T * weights, rcond=None)[0]
+                        cons = np.linalg.lstsq(model.T * weights, app_deref[ix].T * weights, rcond=None)[0]
                     corrs = app[ix] - cons.T @ model
                     if renormalize:
                         corrs = corrs / cons[0, :, None]
 
                     if cluster_mixing : #TODO : remove that 'if' by defining cl_weights even without cluster mixing
                         corrs0[ix] += (cl_weights*corrs.T).T
-                        if iteration == 0 :
-                            resids0[ix] += (cl_weights*(corrs - model[0, :]).T).T
-                        else :
-                            resids0[ix] += (cl_weights*(corrs - corrected[ix, :]).T).T#We compare to the previous correction, not the reference
+                        resids0[ix] += (cl_weights*(corrs - projs[ix]).T).T #We compare to the previous correction, not the reference
                     else :
                         corrs0[ix] += corrs
-                        resids0[ix] += ((corrs - model[0, :]).T).T
-                        if iteration == 0 :
-                            resids0[ix] += ((corrs - model[0, :]).T).T
-                        else :
-                            resids0[ix] += ((corrs - corrected[ix, :]).T).T#We compare to the previous correction, not the reference
-
-                    if len(labels_array)>1 :
-                        cl_size = len(np.where(labels_array[0]==cl)[0])
-                    else :
-                        cl_size = len(labels_array[0])
-                    if verbose:
-                        print("model fitting : iter %3d, cluster %3d (%5d px): time %f" %
-                              (iteration, cl, cl_size , monotonic()-startt))
+                        resids0[ix] += (corrs - projs[ix]) #We compare to the previous correction, not the reference
 
             resids = (resids0**2).sum(1)
             corrs = corrs0
