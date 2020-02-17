@@ -479,7 +479,15 @@ def weights_from_distances(cls_distances, order=1, cutoff=1.):
     Returns :
     array of same shape as cls_distances, but with normalized weights instead of distances
     '''
-    cls_weights = np.nan_to_num(1./(cls_distances**order))
+    cls_weights = np.zeros_like(cls_distances)
+    for p in range(cls_distances.shape[0]):
+        if (cls_distances[p] == 0.).any(): #to avoid the division by 0
+            z = np.where(cls_distances[p] == 0.)[0]
+            cls_weights[p, z] = 1.
+        else :
+            cls_weights[p] = 1./(cls_distances[p]**order)
+    #cls_weights = 1./(.000001+(cls_distances**order))
+    #cls_weights = 1./(cls_distances**order)
     cls_weights = (1./cls_weights.sum(1)*cls_weights.T).T #normalizing weights (sum of weights for a given pix = 1)
     new_weights = np.zeros(np.shape(cls_weights))
     for i, pix_cl_weights in zip(range(len(cls_weights)),cls_weights):
