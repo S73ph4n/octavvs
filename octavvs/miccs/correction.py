@@ -503,7 +503,7 @@ def rmiesc(wn, app, ref, n_components=7, iterations=10, clusters=None,
            verbose=False, a=np.linspace(1.1, 1.5, 10), d=np.linspace(2.0, 8.0, 10),
            bvals=10, plot=False, progressCallback = None, progressPlotCallback=None,
            konevskikh=False, linearcomponent=True, weighted=False, renormalize=False,
-           autoiterations=False, targetrelresiduals=0.95, cluster_mixing=False):
+           autoiterations=False, targetrelresiduals=0.95, cluster_mixing=True):
     """
     Correct scattered spectra using Bassan's algorithm. This implementation does no orthogonalization
     of the extinction matrix or PCA components relative to the reference, nor is the reference smoothed
@@ -689,11 +689,11 @@ def rmiesc(wn, app, ref, n_components=7, iterations=10, clusters=None,
             app_deref = app - projs
 
             for cl in range(len(ref)):
-                #ix = np.where(labels_array[0] == cl)[0] # Indexes of spectra in this cluster
-                #if len(ref)>1 : #only if there are several clusters
-                #    ix = np.concatenate((ix, np.where(labels_array[1] == cl)[0])) #cluster mixing : we also take the pixels for which the second most weighted cluster was cl
-                ix = np.arange(labels_array.shape[1]) #take all the pixels
-                cl_weights = cls_weights[ix, cl] #weight of this cluster's contribution for each of the pixels it contains
+                if cluster_mixing:
+                    ix = np.arange(labels_array.shape[1]) #take all the pixels
+                    cl_weights = cls_weights[ix, cl] #weight of this cluster's contribution for each of the pixels it contains
+                else :
+                    ix = np.where(labels_array[0] == cl)[0] # Indexes of spectra in this cluster
                 if autoiterations:
                     ix = ix[unimproved[ix] <= automax]
                 if ix.size:
@@ -701,7 +701,6 @@ def rmiesc(wn, app, ref, n_components=7, iterations=10, clusters=None,
                                           konevskikh=konevskikh, linearcomponent=linearcomponent,
                                           variancelimit=pcavariancelimit)
 
-                    #print(np.shape(corrected), np.shape(app))
                     if plot:
                         plt.figure()
                         plt.plot(projs[0], label="Proj")
@@ -725,13 +724,11 @@ def rmiesc(wn, app, ref, n_components=7, iterations=10, clusters=None,
 
                     if cluster_mixing : #TODO : remove that 'if' by defining cl_weights even without cluster mixing
                         corrs0[ix] += (cl_weights*corrs.T).T
-                        resids0[ix] += (cl_weights*(corrs - projs[ix]).T).T #We compare to the previous correction, not the reference
                     else :
-                        corrs0[ix] += corrs
-                        resids0[ix] += (corrs - projs[ix]) #We compare to the previous correction, not the reference
+                        corrs0[ix] = corrs
 
-            resids = (resids0**2).sum(1)
             corrs = corrs0
+            resids = ((corrs - projs)**2).sum(1)
             if iteration == 0:
                 corrected = corrs
                 residuals = resids
@@ -751,7 +748,7 @@ def rmiesc(wn, app, ref, n_components=7, iterations=10, clusters=None,
                 #residuals[iximp] = resids[iximp] 
                 nimprov = improved.sum()
             if verbose:
-                print("correction : iter %3d, : avgres %7.3g  imprvd %4d  time %f" %
+                print("iter %3d, : avgres %7.3g  imprvd %4d  time %f" %
                       (iteration, resids.mean(), nimprov, monotonic()-startt))
             if progressCallback:
                 progressCallback(progressA + cl + 1, progressB)
