@@ -688,6 +688,10 @@ def rmiesc(wn, app, ref, n_components=7, iterations=10, clusters=None,
             projs = np.array(projs)
             app_deref = app - projs
 
+            if verbose:
+                print("iter %3d :" % iteration)
+            
+            ix_corrected = []
             for cl in range(len(ref)):
                 if cluster_mixing:
                     ix = np.arange(len(app)) #take all the pixels
@@ -727,30 +731,36 @@ def rmiesc(wn, app, ref, n_components=7, iterations=10, clusters=None,
                         corrs0[ix] += (cl_weights*corrs_cl.T).T
                     else :
                         corrs0[ix] = corrs_cl
+                    print("\t cluster %3d (%5d px)" %
+                          (cl, len(ix)))
+                    ix_corrected = np.concatenate([ix_corrected, ix])
 
+            ix_corrected = np.unique(ix_corrected).astype(int)
             corrs = corrs0
-            resids = ((corrs - projs)**2).sum(1)
+            if iteration == 0:
+                resids = ((corrs - ref[0])**2).sum(1)
+            else :
+                resids = ((corrs - corrected)**2).sum(1)
             if iteration == 0:
                 corrected = corrs
                 residuals = resids
                 nimprov = len(resids)
             else:
-                ix = np.arange(len(resids))
-                improved = resids < residuals[ix]
-                iximp = ix[improved]  # Indexes of improved spectra
+                improved = resids[ix_corrected] < residuals[ix_corrected]
+                iximp = ix_corrected[improved]  # Indexes of improved spectra
                 if autoiterations:
                     impmore = resids[improved] < residuals[iximp] * targetrelresiduals
                     unimproved[iximp[impmore]] = 0
                     unimproved[iximp[np.logical_not(impmore)]] += 1 
-                    unimproved[ix[np.logical_not(improved)]] += autoupadd
+                    unimproved[ix_corrected[np.logical_not(improved)]] += autoupadd
                 corrected[iximp, :] = corrs[improved, :]
                 #corrected[iximp, :] = corrs[iximp, :]
                 residuals[iximp] = resids[improved] 
                 #residuals[iximp] = resids[iximp] 
                 nimprov = improved.sum()
             if verbose:
-                print("iter %3d, : avgres %7.3g  imprvd %4d  time %f" %
-                      (iteration, resids.mean(), nimprov, monotonic()-startt))
+                print("avgres %7.3g  imprvd %4d  time %f \n" %
+                      (resids[ix_corrected].mean(), nimprov, monotonic()-startt))
             if progressCallback:
                 progressCallback(progressA + cl + 1, progressB)
 
