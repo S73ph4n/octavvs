@@ -677,7 +677,7 @@ def rmiesc(wn, app, ref, n_components=7, iterations=10, clusters=None,
                 progressPlotCallback(ref, (iteration, iterations))
             ref[ref < 0] = 0
 
-            cls_weights = weights_from_distances(cls_distances, order=1, cutoff=0.)
+            cls_weights = weights_from_distances(cls_distances, order=1.)
             labels_array = np.argsort(cls_weights, axis=1)[:,::-1].T
             corrs0, resids0 = np.zeros((labels_array.shape[1], ref.shape[1])), np.zeros((labels_array.shape[1], ref.shape[1]))  
 
@@ -690,13 +690,14 @@ def rmiesc(wn, app, ref, n_components=7, iterations=10, clusters=None,
 
             for cl in range(len(ref)):
                 if cluster_mixing:
-                    ix = np.arange(labels_array.shape[1]) #take all the pixels
-                    cl_weights = cls_weights[ix, cl] #weight of this cluster's contribution for each of the pixels it contains
+                    ix = np.arange(len(app)) #take all the pixels
                 else :
                     ix = np.where(labels_array[0] == cl)[0] # Indexes of spectra in this cluster
                 if autoiterations:
                     ix = ix[unimproved[ix] <= automax]
                 if ix.size:
+                    if cluster_mixing :
+                        cl_weights = cls_weights[ix, cl] #weight of this cluster's contribution for each of the pixels it contains
                     model0 = compute_model(wn, ref[cl], n_components, a, d, bvals,
                                           konevskikh=konevskikh, linearcomponent=linearcomponent,
                                           variancelimit=pcavariancelimit)
@@ -718,14 +719,14 @@ def rmiesc(wn, app, ref, n_components=7, iterations=10, clusters=None,
                         cons = np.linalg.lstsq(model.T, app_deref[ix].T, rcond=None)[0]
                     else:
                         cons = np.linalg.lstsq(model.T * weights, app_deref[ix].T * weights, rcond=None)[0]
-                    corrs = app[ix] - cons.T @ model
+                    corrs_cl = app[ix] - cons.T @ model
                     if renormalize:
-                        corrs = corrs / cons[0, :, None]
+                        corrs_cl = corrs_cl / cons[0, :, None]
 
                     if cluster_mixing : #TODO : remove that 'if' by defining cl_weights even without cluster mixing
-                        corrs0[ix] += (cl_weights*corrs.T).T
+                        corrs0[ix] += (cl_weights*corrs_cl.T).T
                     else :
-                        corrs0[ix] = corrs
+                        corrs0[ix] = corrs_cl
 
             corrs = corrs0
             resids = ((corrs - projs)**2).sum(1)
