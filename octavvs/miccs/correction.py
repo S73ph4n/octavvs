@@ -737,22 +737,20 @@ def rmiesc(wn, app, ref, n_components=7, iterations=10, clusters=None,
 
             ix_corrected = np.unique(ix_corrected).astype(int)
             corrs = corrs0
-            if iteration == 0:
-                resids = ((corrs - ref[0])**2).sum(1)
-            else :
-                resids = ((corrs - corrected)**2).sum(1)
+            resids = ((corrs - projs)**2).sum(1)
+
             if iteration == 0:
                 corrected = corrs
                 residuals = resids
                 nimprov = len(resids)
             else:
-                improved = resids[ix_corrected] < residuals[ix_corrected]
-                iximp = ix_corrected[improved]  # Indexes of improved spectra
+                improved = resids < residuals
+                iximp = np.arange(len(resids))[improved]  # Indexes of improved spectra
                 if autoiterations:
                     impmore = resids[improved] < residuals[iximp] * targetrelresiduals
                     unimproved[iximp[impmore]] = 0
                     unimproved[iximp[np.logical_not(impmore)]] += 1 
-                    unimproved[ix_corrected[np.logical_not(improved)]] += autoupadd
+                    unimproved[np.logical_not(improved)] += autoupadd
                 corrected[iximp, :] = corrs[improved, :]
                 #corrected[iximp, :] = corrs[iximp, :]
                 residuals[iximp] = resids[improved] 
